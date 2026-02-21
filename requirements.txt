@@ -1,0 +1,4 @@
+torch>=2.3.0
+tiktoken>=0.7.0
+datasets>=2.19.0
+numpy>=1.26.0
