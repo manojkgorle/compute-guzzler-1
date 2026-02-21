@@ -35,8 +35,19 @@ from generate import generate
 def cmd_train(args):
     """Train GPT-2 on WikiText-2."""
     config = GPT2Config()
+
+    # On CUDA (16GB T4): use larger batch with no accumulation for better
+    # GPU utilization. On MPS: smaller batch with 4x accumulation.
+    if args.device == "cuda":
+        batch_size = args.batch_size if args.batch_size != 8 else 32
+        grad_accum = 1
+    else:
+        batch_size = args.batch_size
+        grad_accum = 4
+
     train_config = TrainConfig(
-        batch_size=args.batch_size,
+        batch_size=batch_size,
+        gradient_accumulation_steps=grad_accum,
         max_epochs=args.epochs,
         learning_rate=args.lr,
         device=args.device,
