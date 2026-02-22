@@ -1,0 +1,17 @@
+{"step": 250, "val_loss": 6.062213897705078, "val_perplexity": 429.3248668384974}
+{"step": 500, "val_loss": 5.598217964172363, "val_perplexity": 269.94492701446995}
+{"step": 750, "val_loss": 5.298424243927002, "val_perplexity": 200.02137661811116}
+{"step": 1000, "val_loss": 5.119943618774414, "val_perplexity": 167.32593531384236}
+{"step": 1250, "val_loss": 5.05894136428833, "val_perplexity": 157.42377365041315}
+{"step": 1500, "val_loss": 5.082756519317627, "val_perplexity": 161.21784409386638}
+{"step": 1750, "val_loss": 5.152761459350586, "val_perplexity": 172.9083109254835}
+{"step": 2000, "val_loss": 5.264421463012695, "val_perplexity": 193.3344253102162}
+{"step": 2250, "val_loss": 5.454336643218994, "val_perplexity": 233.7697468770312}
+{"step": 2500, "val_loss": 5.638160228729248, "val_perplexity": 280.94536750169624}
+{"step": 2750, "val_loss": 5.761656761169434, "val_perplexity": 317.8745350849953}
+{"step": 3000, "val_loss": 5.956236362457275, "val_perplexity": 386.1540420238841}
+{"step": 3250, "val_loss": 6.126131057739258, "val_perplexity": 457.6620628557862}
+{"step": 3500, "val_loss": 6.243322372436523, "val_perplexity": 514.5652515674865}
+{"step": 3750, "val_loss": 6.331996440887451, "val_perplexity": 562.2780288881175}
+{"step": 4000, "val_loss": 6.431019306182861, "val_perplexity": 620.806417437609}
+{"step": 4250, "val_loss": 6.495692729949951, "val_perplexity": 662.2828496052675}

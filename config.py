@@ -134,7 +134,7 @@ class TrainConfig:
     # (~2.4M tokens), so we need multiple epochs for the model to learn.
     # 30 epochs at context_length=512 sees roughly the same total tokens
     # as 15 epochs at context_length=1024, but each step is ~2-3x faster.
-    max_epochs: int = 30
+    max_epochs: int = 15
 
     # Linear warmup steps: LR ramps from 0 to peak over this many steps.
     # Warmup prevents large, noisy gradients in early training from

@@ -127,8 +127,13 @@ def create_dataloaders(
     val_dataset = WikiTextDataset("validation", config.context_length)
 
     use_cuda = train_config.device == "cuda"
-    num_workers = 4 if use_cuda else 0
-    pin_memory = use_cuda
+    if use_cuda:
+        import os
+        num_workers = min(2, os.cpu_count() or 0)
+        pin_memory = True
+    else:
+        num_workers = 0
+        pin_memory = False
 
     train_loader = DataLoader(
         train_dataset,

@@ -169,6 +169,7 @@ def save_checkpoint(
     step: int,
     val_loss: float,
     checkpoint_dir: str,
+    epoch: int = 0,
 ):
     """Save model checkpoint containing everything needed to resume training.
 
@@ -176,7 +177,7 @@ def save_checkpoint(
     - Model weights (state_dict)
     - Optimizer state (momentum buffers, adaptive learning rates)
     - Both configs (for reconstructing model/training setup)
-    - Current step and validation loss (for tracking progress)
+    - Current step, epoch, and validation loss (for tracking progress)
     """
     checkpoint = {
         "model_state_dict": model.state_dict(),
@@ -184,6 +185,7 @@ def save_checkpoint(
         "model_config": config.__dict__,
         "train_config": train_config.__dict__,
         "step": step,
+        "epoch": epoch,
         "val_loss": val_loss,
     }
 
@@ -203,6 +205,9 @@ def train(
     val_loader,
     train_config: TrainConfig,
     config: GPT2Config,
+    metrics_logger=None,
+    hook_manager=None,
+    resume_checkpoint=None,
 ):
     """Main training loop with device-aware optimizations.
 
@@ -239,23 +244,49 @@ def train(
     # Not used on MPS (no float16 tensor cores, gives 0% speedup).
     scaler = torch.amp.GradScaler("cuda", enabled=use_cuda)
 
+    # Resume optimizer state and training progress from checkpoint
+    global_step = 0
+    best_val_loss = float("inf")
+    start_epoch = 0
+
+    if resume_checkpoint is not None:
+        if "optimizer_state_dict" in resume_checkpoint:
+            optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
+            # Move optimizer state tensors to device (they're saved on CPU)
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(device)
+            print("  Optimizer state restored (momentum + adaptive LR buffers)")
+        global_step = resume_checkpoint.get("step", 0)
+        best_val_loss = resume_checkpoint.get("val_loss", float("inf"))
+        print(f"  Resuming from step {global_step}, best_val_loss={best_val_loss:.4f}")
+
     # Calculate total optimizer steps for LR schedule
     steps_per_epoch = len(train_loader) // train_config.gradient_accumulation_steps
     total_steps = steps_per_epoch * train_config.max_epochs
+    if resume_checkpoint is not None and "epoch" in resume_checkpoint:
+        # Saved epoch is the epoch that was in progress; resume from next one
+        start_epoch = resume_checkpoint["epoch"] + 1
+    elif global_step > 0:
+        start_epoch = global_step // steps_per_epoch
+    else:
+        start_epoch = 0
+
     print(f"\nTraining for {train_config.max_epochs} epochs")
     print(f"  {len(train_loader)} micro-batches/epoch")
     print(f"  {steps_per_epoch} optimizer steps/epoch")
     print(f"  {total_steps} total optimizer steps")
     print(f"  Warmup: {train_config.warmup_steps} steps")
+    if start_epoch > 0:
+        print(f"  Resuming from epoch {start_epoch + 1}, step {global_step}")
     print()
 
     os.makedirs(train_config.checkpoint_dir, exist_ok=True)
 
-    global_step = 0
-    best_val_loss = float("inf")
     training_start = time.time()
 
-    for epoch in range(train_config.max_epochs):
+    for epoch in range(start_epoch, train_config.max_epochs):
         model.train()
         # Accumulate loss ON DEVICE as a tensor — no .item() per batch.
         # This avoids forcing a GPU-CPU sync on every micro-batch.
@@ -286,6 +317,18 @@ def train(
                 # Unscale gradients before clipping (needed for correct norm)
                 scaler.unscale_(optimizer)
 
+                # Per-layer gradient norms (before clipping, for viz)
+                _per_layer_grad_norms = None
+                if metrics_logger is not None:
+                    _per_layer_grad_norms = []
+                    for block in model.transformer.h:
+                        sq_sum = sum(
+                            p.grad.data.norm() ** 2
+                            for p in block.parameters()
+                            if p.grad is not None
+                        )
+                        _per_layer_grad_norms.append(sq_sum.sqrt().item())
+
                 # Gradient clipping
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     model.parameters(), train_config.grad_clip
@@ -315,17 +358,49 @@ def train(
                         f"Time {elapsed:.0f}s"
                     )
 
+                    # Viz logging
+                    if metrics_logger is not None:
+                        from viz.metrics import StepMetrics
+                        from viz.app import emit_step_update
+                        from dataclasses import asdict
+                        summary = hook_manager.collect() if hook_manager else None
+                        step_metrics = StepMetrics(
+                            step=global_step, epoch=epoch + 1,
+                            loss=avg_loss, perplexity=ppl,
+                            learning_rate=lr,
+                            grad_norm=grad_norm.item() if hasattr(grad_norm, 'item') else float(grad_norm),
+                            wall_time=time.time() - training_start,
+                            residual_norms=summary.residual_norms if summary else None,
+                            attn_output_norms=summary.attn_output_norms if summary else None,
+                            mlp_output_norms=summary.mlp_output_norms if summary else None,
+                            mlp_sparsity=summary.mlp_sparsity if summary else None,
+                            per_layer_grad_norms=_per_layer_grad_norms,
+                        )
+                        metrics_logger.log_step(step_metrics)
+                        emit_step_update(asdict(step_metrics))
+                        if hook_manager:
+                            hook_manager.clear()
+
                 # Periodic validation
                 if global_step % train_config.eval_interval == 0:
                     val_loss = evaluate(model, val_loader, device)
                     val_ppl = math.exp(min(val_loss, 20))
                     print(f"  >>> Validation: Loss {val_loss:.4f} | PPL {val_ppl:.2f}")
 
+                    if metrics_logger is not None:
+                        from viz.metrics import ValMetrics
+                        from viz.app import emit_val_update
+                        from dataclasses import asdict
+                        val_m = ValMetrics(step=global_step, val_loss=val_loss, val_perplexity=val_ppl)
+                        metrics_logger.log_validation(val_m)
+                        emit_val_update(asdict(val_m))
+
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         save_checkpoint(
                             model, optimizer, config, train_config,
                             global_step, val_loss, train_config.checkpoint_dir,
+                            epoch=epoch,
                         )
 
                     model.train()
@@ -349,6 +424,7 @@ def train(
             save_checkpoint(
                 model, optimizer, config, train_config,
                 global_step, val_loss, train_config.checkpoint_dir,
+                epoch=epoch,
             )
 
     total_time = time.time() - training_start
